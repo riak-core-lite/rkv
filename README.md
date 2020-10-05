@@ -68,3 +68,107 @@ sudo apt-get install -y default-jdk
 sudo apt-get install -y libwxgtk3.0-dev
 ```
 
+## Project Setup
+
+Instal the Riak Core Lite Mix task:
+
+```sh
+$ mix archive.install hex rcl
+```
+
+```
+Resolving Hex dependencies...
+Dependency resolution completed:
+New:
+  rcl 0.1.9
+* Getting rcl (Hex package)
+All dependencies are up to date
+Compiling 2 files (.ex)
+Generated rcl app
+Generated archive "rcl-0.1.9.ez" with MIX_ENV=prod
+* creating /home/mariano/.asdf/installs/elixir/1.10.4-otp-23/.mix/archives/rcl-0.1.9
+```
+
+If you have an existing version installed it will ask you if you want to replace it, say `y`:
+
+```
+Found existing entry: /home/mariano/.asdf/installs/elixir/1.10.4-otp-23/.mix/archives/rcl-0.1.9
+Are you sure you want to replace it with "rcl-0.1.9.ez"? [Yn]
+```
+
+
+Create a new project called `rkv`, to make it simpler don't change the name of the project unless you want to edit every single snippet :)
+
+```sh
+mix rcl new rkv
+```
+
+```
+Creating project rkv, module Rkv
+* creating README.md
+* creating .formatter.exs
+* creating .gitignore
+* creating mix.exs
+* creating lib
+* creating lib/rkv.ex
+* creating test
+* creating test/test_helper.exs
+* creating test/rkv_test.exs
+
+Your Mix project was created successfully.
+You can use "mix" to compile it, test it, and more:
+
+    cd rkv
+    mix test
+
+Run "mix help" for more commands.
+rcl: creating rkv/mix.exs
+rcl: creating rkv/lib/rkv.ex
+rcl: creating rkv/lib/rkv/application.ex
+rcl: creating rkv/lib/rkv/vnode.ex
+rcl: creating rkv/lib/rkv/service.ex
+rcl: creating rkv/lib/rkv/supervisor.ex
+rcl: creating rkv/config/config.exs
+rcl: creating rkv/config/dev.exs
+rcl: creating rkv/config/test.exs
+rcl: creating rkv/config/ct.exs
+rcl: creating rkv/config/node1.exs
+rcl: creating rkv/config/node2.exs
+rcl: creating rkv/config/node3.exs
+rcl: creating rkv/rel/env.bat.eex
+rcl: creating rkv/rel/env.sh.eex
+rcl: creating rkv/rel/vm.args.eex
+```
+
+```sh
+cd rkv
+```
+
+## Smoke Test
+
+Get deps and compile:
+```sh
+cd rkv
+mix deps.get
+
+mix compile
+```
+
+Start the project and attach iex:
+
+```sh
+iex --name dev@127.0.0.1 -S mix run
+```
+
+Run this in iex:
+```elixir
+Rkv.Service.ping()
+```
+
+If after many logs you see something like this (the last number can be different):
+
+```elixir
+{:pong, 2, :"dev@127.0.0.1", 159851741583067506678528028578343455274867621888}
+```
+
+Then it works!
