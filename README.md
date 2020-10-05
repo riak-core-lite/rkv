@@ -1,6 +1,13 @@
 # Rkv
 
+Note: many sections start with a line that says `tag: <tag-name>` if you do
+`git checkout <tag-name>` it will take you to the commit where the changes of
+that section are all commited, so you can skip them and try the examples or run
+the tests.
+
 ## Tools and Versions
+
+tag: 01-tools-setup
 
 This tutorial assumes you have the following tools and versions installed:
 
@@ -69,6 +76,8 @@ sudo apt-get install -y libwxgtk3.0-dev
 ```
 
 ## Project Setup
+
+tag: 02-project-setup
 
 Instal the Riak Core Lite Mix task:
 
@@ -175,6 +184,8 @@ Then it works!
 
 ## Smaller Ring (for readability)
 
+tag: 03-ring-size-16
+
 Edit `config/config.exs`:
 
 ```elixir
@@ -192,6 +203,8 @@ rm -rf data
 ```
 
 ## A Simple Key Value Store
+
+tag: 04-kv-ets
 
 Abstract Key Value Store behaviour:
 
@@ -283,6 +296,8 @@ mix test
 ```
 
 ## Making the Key Value Store Distributed
+
+tag: 05-kv-vnode-commands
 
 Build 3 releases with different configurations to run them on the same machine:
 
@@ -488,6 +503,8 @@ Rkv.Service.get(:k2)
 
 ## External API Module
 
+tag: 06-kv-external-api
+
 Let's wrap `Rkv.Service` with an external API that doesn't expose so much
 internal state that's only useful for learning , some tests and development but
 not much for production:
@@ -573,6 +590,8 @@ Rkv.get(:k2)
 ```
 
 ## Quorun Commands
+
+tag: 07-quorum-commands
 
 Add the following functions to `lib/rkv/service.ex`:
 
@@ -719,6 +738,8 @@ Rkv.Service.get_quorum(:k1, 3, 3, 1000)
 
 ## Testing
 
+tag: 08-testing
+
 Add this deps to `mix.exs`:
 
 ```elixir
@@ -860,6 +881,8 @@ MIX_ENV=ct mix ct
 ```
 
 ## Benchmarking
+
+tag: 09-benchmarking
 
 Create a new project inside `rkv`:
 
@@ -1062,6 +1085,8 @@ install.packages("lubridate")
 ```
 
 ## Handoff
+
+tag: 10-handoff
 
 [source](https://riak.com/posts/technical/understanding-riak_core-handoff/index.html)
 
@@ -1335,6 +1360,8 @@ Rkv.Service.get("k23")
 
 ## Redis Compatible API
 
+tag: 11-redis-api
+
 Add dep to `mix.exs`:
 
 ```elixir
@@ -1447,6 +1474,8 @@ config :rkv,
 Use `redis-cli -p 6479` to specify the port of the node you want to send the command to.
 
 ## Persistent KV Implementation with DETS
+
+tag: 12-persistent-kv-dets
 
 Add a new file at `lib/rkv/kv_dets.ex` with the following content:
 
