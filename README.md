@@ -281,3 +281,207 @@ Test it:
 ```sh
 mix test
 ```
+
+## Making the Key Value Store Distributed
+
+Build 3 releases with different configurations to run them on the same machine:
+
+```sh
+MIX_ENV=node1 mix release node1
+MIX_ENV=node2 mix release node2
+MIX_ENV=node3 mix release node3
+```
+
+On terminal 1 (node1):
+```sh
+./_build/node1/rel/node1/bin/node1 start_iex
+```
+
+On terminal 2 (node2):
+```sh
+./_build/node2/rel/node2/bin/node2 start_iex
+```
+
+On terminal 3 (node3):
+```sh
+./_build/node3/rel/node3/bin/node3 start_iex
+```
+
+Run on node2 and node3:
+```elixir
+:riak_core.join('node1@127.0.0.1')
+```
+
+You should see something like this on node1:
+
+```
+[info]  'node3@127.0.0.1' joined cluster with status 'joining'
+[info]  'node2@127.0.0.1' joined cluster with status 'joining'
+```
+
+Run on node1:
+```elixir
+:riak_core_claimant.plan()
+:riak_core_claimant.commit()
+```
+
+Periodically run this until it stabilizes:
+
+```elixir
+:riak_core_console.member_status([])
+```
+
+You should see something like this on node1:
+
+```
+================================= Membership ==================================
+Status     Ring    Pending    Node
+-------------------------------------------------------------------------------
+valid      37.5%      --      'node1@127.0.0.1'
+valid      31.3%      --      'node2@127.0.0.1'
+valid      31.3%      --      'node3@127.0.0.1'
+-------------------------------------------------------------------------------
+Valid:3 / Leaving:0 / Exiting:0 / Joining:0 / Down:0
+```
+
+Periodically run this until it stabilizes:
+
+```elixir
+{:ok, ring} = :riak_core_ring_manager.get_my_ring()
+:riak_core_ring.pretty_print(ring, [:legend])
+```
+
+You should see something like this on node1:
+
+```
+==================================== Nodes ====================================
+Node a: 6 ( 37.5%) node1@127.0.0.1
+Node b: 5 ( 31.3%) node2@127.0.0.1
+Node c: 5 ( 31.3%) node3@127.0.0.1
+==================================== Ring =====================================
+abca|bcab|cabc|abca|
+```
+
+Run these (play with the argument value) and see which node and partition replies
+
+```elixir
+Rkv.Service.ping(3)
+Rkv.Service.ping(5)
+Rkv.Service.ping(7)
+```
+
+Let's add `get`, `put` and `delete` to `Rkv.Service` (`lib/rkv/service.ex`):
+
+```elixir
+defmodule Rkv.Service do
+  def ping(v \\ 1) do
+    send_cmd("ping#{v}", {:ping, v})
+  end
+
+  def put(k, v) do
+    send_cmd(k, {:put, {k, v}})
+  end
+
+  def get(k) do
+    send_cmd(k, {:get, k})
+  end
+
+  def delete(k) do
+    send_cmd(k, {:delete, k})
+  end
+
+  defp send_cmd(k, cmd) do
+    idx = :riak_core_util.chash_key({"rkv", k})
+    pref_list = :riak_core_apl.get_primary_apl(idx, 1, Rkv.Service)
+
+    [{index_node, _type}] = pref_list
+
+    :riak_core_vnode_master.sync_command(index_node, cmd, Rkv.VNode_master)
+  end
+end
+```
+
+Implement the commands in `lib/rkv/vnode.ex`, change init to:
+```elixir
+  def init([partition]) do
+    kv_mod = Rkv.KV.ETS
+    {:ok, state} = kv_mod.init(%{uid: partition})
+    {:ok, %{partition: partition, kv_mod: kv_mod, kv_state: state}}
+  end
+```
+
+Add the following 3 clauses after `:ping`:
+
+```elixir
+  def handle_command({:get, k}, _sender, state) do
+    result = state.kv_mod.get(state.kv_state, k)
+    {:reply, {result, node(), state.partition}, state}
+  end
+
+  def handle_command({:put, {k, v}}, _sender, state) do
+    result = state.kv_mod.put(state.kv_state, k, v)
+    {:reply, {result, node(), state.partition}, state}
+  end
+
+  def handle_command({:delete, k}, _sender, state) do
+    result = state.kv_mod.delete(state.kv_state, k)
+    {:reply, {result, node(), state.partition}, state}
+  end
+```
+
+Compile and run:
+
+```sh
+mix compile
+iex --name dev@127.0.0.1 -S mix run
+```
+
+Test the new functions:
+
+```elixir
+Rkv.Service.get(:k1)
+```
+
+```elixir
+{{:error, :not_found}, :"dev@127.0.0.1", 639406966332270026714112114313373821099470487552}
+```
+
+```elixir
+Rkv.Service.delete(:k1)
+```
+
+```elixir
+{:ok, :"dev@127.0.0.1", 639406966332270026714112114313373821099470487552}
+```
+
+```elixir
+Rkv.Service.put(:k2, :v2)
+```
+
+```elixir
+{:ok, :"dev@127.0.0.1", 685078892498860742907977265335757665463718379520}
+```
+
+```elixir
+Rkv.Service.get(:k2)
+```
+
+```elixir
+{{:ok, :v2}, :"dev@127.0.0.1", 685078892498860742907977265335757665463718379520}
+```
+
+```elixir
+Rkv.Service.delete(:k2)
+```
+
+```elixir
+{:ok, :"dev@127.0.0.1", 685078892498860742907977265335757665463718379520}
+```
+
+```elixir
+Rkv.Service.get(:k2)
+```
+
+```elixir
+{{:error, :not_found}, :"dev@127.0.0.1", 685078892498860742907977265335757665463718379520}
+```

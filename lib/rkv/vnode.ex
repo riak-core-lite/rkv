@@ -6,11 +6,28 @@ defmodule Rkv.VNode do
   end
 
   def init([partition]) do
-    {:ok, %{partition: partition}}
+    kv_mod = Rkv.KV.ETS
+    {:ok, state} = kv_mod.init(%{uid: partition})
+    {:ok, %{partition: partition, kv_mod: kv_mod, kv_state: state}}
   end
 
   def handle_command({:ping, v}, _sender, state = %{partition: partition}) do
      {:reply, {:pong, v + 1, node(), partition}, state}
+  end
+
+  def handle_command({:get, k}, _sender, state) do
+    result = state.kv_mod.get(state.kv_state, k)
+    {:reply, {result, node(), state.partition}, state}
+  end
+
+  def handle_command({:put, {k, v}}, _sender, state) do
+    result = state.kv_mod.put(state.kv_state, k, v)
+    {:reply, {result, node(), state.partition}, state}
+  end
+
+  def handle_command({:delete, k}, _sender, state) do
+    result = state.kv_mod.delete(state.kv_state, k)
+    {:reply, {result, node(), state.partition}, state}
   end
 
   def handoff_starting(_dest, state) do
