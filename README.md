@@ -1333,3 +1333,116 @@ Fetch some key and check which node returns it:
 Rkv.Service.get("k23")
 ```
 
+## Redis Compatible API
+
+Add dep to `mix.exs`:
+
+```elixir
+      {:edis_proto, "~> 0.2.0"},
+```
+
+Update init in `lib/rkv/supervisor.ex` to start the Redis Listener:
+
+```elixir
+  def init(_args) do
+    min_port = Application.get_env(:rkv, :redis_min_port, 6379)
+    max_port = Application.get_env(:rkv, :redis_max_port, 6379)
+    listener_opts = %{min_port: min_port, max_port: max_port}
+    listener_sup = {:edis_listener_sup, {:edis_listener_sup, :start_link, [listener_opts]},
+        :permanent, 1000, :supervisor, [:edis_listener_sup]}
+    client_opts = %{command_runner_mod: Rkv.Redis.Protocol}
+    client_sup = {:edis_client_sup, {:edis_client_sup, :start_link, [client_opts]},
+        :permanent, 1000, :supervisor, [:edis_client_sup]}
+
+    children = [
+      worker(:riak_core_vnode_master, [Rkv.VNode], id: Rkv.VNode_master_worker),
+      listener_sup,
+      client_sup
+    ]
+
+    Supervisor.init(children, strategy: :one_for_one, max_restarts: 5, max_seconds: 10)
+  end
+```
+
+Create a new file at `lib/rkv/redis_protocol.ex` with the following content:
+
+```elixir
+defmodule Rkv.Redis.Protocol do
+  def run_command("SET", [key, val]) do
+    :ok = Rkv.put(key, val)
+    {:ok, nil}
+  end
+
+  def run_command("GET", [key]) do
+    case Rkv.get(key) do
+      {:ok, v} ->
+        {:ok, nil, v}
+
+      {:error, _reason} ->
+        {:ok, nil, nil}
+    end
+  end
+
+  def run_command("DEL", [key]) do
+    :ok = Rkv.delete(key)
+    {:ok, nil}
+  end
+end
+```
+
+Compile and run:
+
+```sh
+mix deps.get
+mix compile
+iex --name dev@127.0.0.1 -S mix run
+```
+
+Install redis tools, in ubuntu:
+
+```sh
+sudo apt install redis-tools
+```
+
+```sh
+redis-cli get foo
+(nil)
+
+redis-cli set foo 42
+OK
+
+redis-cli get foo
+42
+
+redis-cli del foo
+OK
+
+redis-cli get foo
+(nil)
+```
+
+To listen in different ports in node1, node2 and node3 add the following:
+
+`config/node1.exs`:
+```elixir
+config :rkv,
+  redis_min_port: 6379,
+  redis_max_port: 6379
+```
+
+`config/node2.exs`:
+```elixir
+config :rkv,
+  redis_min_port: 6479,
+  redis_max_port: 6479
+```
+
+`config/node3.exs`:
+```elixir
+config :rkv,
+  redis_min_port: 6579,
+  redis_max_port: 6579
+```
+
+Use `redis-cli -p 6479` to specify the port of the node you want to send the command to.
+

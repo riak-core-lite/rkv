@@ -26,7 +26,8 @@ defmodule Rkv.MixProject do
       {:riak_core, "~> 0.10", hex: :riak_core_lite},
       {:riak_core_lite_util, "~> 0.1.0"},
       {:ctex, "~> 0.1.0", env: :ct},
-      {:rcl_test, "~> 0.2.0", env: :ct}
+      {:rcl_test, "~> 0.2.0", env: :ct},
+      {:edis_proto, "~> 0.2.0"}
       # {:dep_from_hexpm, "~> 0.3.0"},
       # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
     ]
