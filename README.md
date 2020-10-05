@@ -1060,3 +1060,276 @@ install.packages("dplyr")
 install.packages("scales")
 install.packages("lubridate")
 ```
+
+## Handoff
+
+[source](https://riak.com/posts/technical/understanding-riak_core-handoff/index.html)
+
+### What is a handoff?
+
+A handoff is a transfer over the network of the keys and associated values from
+one cluster member to another cluster member. There are four types of handoffs
+that are supported in riak\_core: **ownership, hinted, repair, and resize**. Of
+these, the most commonly encountered types are ownership and hinted.
+
+#### Repairs
+
+A repair handoff happens when your application explicitly calls
+`riak_core_vnode_manager:repair/3` – an example implementation of this can be
+found in `riak_kv_vnode:repair/1`. You might use this when your application
+detects some kind of data error during a periodic integrity sweep – you have to
+roll your own error detection code; riak\_core can’t intuit your application
+semantics. Be aware that this operation is a big hammer and if there is a lot
+of data in a vnode, you will pay a significant performance and latency penalty
+while a repair is on-going between the (physical) nodes involved in the repair
+operation.
+
+#### Resize
+
+riak\_core is set up to split its hash key space into partitions. The number of
+keyspaces is defined internally by the “ring size”. By default the ring size is
+64. (Currently this number must be a power of two.)
+
+riak\_core will figure out how to move vnode data around your cluster members as
+it conforms to this new partitioning directive and it uses the resize handoff
+type to achieve this.
+
+#### Ownership
+
+An ownership handoff happens when a cluster member joins or leaves the cluster.
+When a cluster is added or removed, riak\_core reassigns the (physical) nodes
+responsible for each vnode and it uses the ownership handoff type to move the
+data from its old home to its new home. (The reassignment activity occurs when
+the “cluster plan” command is executed and the data transfers begin once the
+“cluster commit” command is executed.)
+
+#### Hinted
+
+When the primary vnode for a particular part of the ring is offline, riak\_core
+still accepts operations on it and routes those to a backup partition or
+“fallback” as its sometimes known in the source code. When the primary vnode
+comes back online, riak\_core uses a hinted handoff type to sync the current
+vnode state from the fallback(s) to the primary. Once the primary is
+synchronized, operations are routed to the primary once again.
+
+
+Edit `lib/rkv/vnode.ex` after `@behaviour`:
+```elixir
+  require Logger
+  require Record
+
+  Record.defrecord(
+    :fold_req_v2,
+    :riak_core_fold_req_v2,
+    Record.extract(:riak_core_fold_req_v2, from_lib: "riak_core/include/riak_core_vnode.hrl")
+  )
+```
+
+replace this functions in `lib/rkv/vnode.ex`:
+
+```elixir
+  def handoff_starting(_dest, state) do
+    Logger.debug("handoff_starting #{state.partition}")
+    {true, state}
+  end
+
+  def handoff_cancelled(state) do
+    Logger.debug("handoff_cancelled #{state.partition}")
+    {:ok, state}
+  end
+
+  def handoff_finished(_dest, state) do
+    Logger.debug("handoff_finished #{state.partition}")
+    {:ok, state}
+  end
+
+  def handle_handoff_command(fold_req_v2() = fold_req, _sender, state) do
+    Logger.debug("handoff #{state.partition}")
+    foldfun = fold_req_v2(fold_req, :foldfun)
+    acc0 = fold_req_v2(fold_req, :acc0)
+
+    acc_final =
+      state.kv_mod.reduce(
+        state.kv_state,
+        fn {k, v}, acc_in ->
+          Logger.debug("handoff #{state.partition}: #{k} #{v}")
+          foldfun.(k, v, acc_in)
+        end,
+        acc0
+      )
+
+    {:reply, acc_final, state}
+  end
+
+  def handle_handoff_command(_request, _sender, state) do
+    Logger.debug("Handoff generic request, ignoring #{state.partition}")
+    {:noreply, state}
+  end
+
+  def is_empty(state) do
+    is_empty = state.kv_mod.is_empty(state.kv_state)
+    Logger.debug("is_empty #{state.partition}: #{is_empty}")
+    {is_empty, state}
+  end
+
+  def terminate(reason, state) do
+    Logger.debug("terminate #{state.partition}: #{reason}")
+    :ok
+  end
+
+  def delete(state) do
+    Logger.debug("delete #{state.partition}")
+    state.kv_mod.dispose(state.kv_state)
+    {:ok, state}
+  end
+
+  def handle_handoff_data(bin_data, state) do
+    {k, v} = :erlang.binary_to_term(bin_data)
+    state.kv_mod.put(state.kv_state, k, v)
+    Logger.debug("handle_handoff_data #{state.partition}: #{k} #{v}")
+    {:reply, :ok, state}
+  end
+
+  def encode_handoff_item(k, v) do
+    Logger.debug("encode_handoff_item #{k} #{v}")
+    :erlang.term_to_binary({k, v})
+  end
+```
+
+We need more functions in our KV behavour to handle handoff, add the following at the end of `lib/rkv/kv.ex`:
+
+```elixir
+  @callback is_empty(state :: kv_state()) ::
+              bool()
+  @callback dispose(state :: kv_state()) ::
+              :ok | {:error, reason :: term()}
+
+  @callback reduce(
+              state :: kv_state(),
+              fun :: ({term(), term()}, term() -> term()),
+              acc0 :: term()
+            ) :: term()
+```
+
+Implement the new callbacks at the end of `lib/rkv/kv_ets.ex`:
+```elixir
+  def is_empty(state) do
+    :ets.first(state.table_id) == :"$end_of_table"
+  end
+
+  def dispose(state) do
+    true = :ets.delete(state.table_id)
+    :ok
+  end
+
+  def reduce(state, fun, acc0) do
+    :ets.foldl(fun, acc0, state.table_id)
+  end
+```
+
+Clean existing cluster state:
+```
+rm -rf data
+```
+
+Rebuild:
+
+```
+MIX_ENV=node1 mix release --overwrite node1
+MIX_ENV=node2 mix release --overwrite node2
+MIX_ENV=node3 mix release --overwrite node3
+```
+
+Start node1:
+
+```
+./_build/node1/rel/node1/bin/node1 start_iex
+```
+
+Run in node1:
+
+```elixir
+for i <- :lists.seq(1, 100), do: Rkv.Service.put("k#{i}", i)
+```
+
+Start node2 in another terminal:
+
+```
+./_build/node2/rel/node2/bin/node2 start_iex
+```
+
+Run in node2:
+
+```elixir
+for i <- :lists.seq(101, 200), do: Rkv.Service.put("k#{i}", i)
+```
+
+Start node3 in another terminal:
+
+```
+./_build/node3/rel/node3/bin/node3 start_iex
+```
+
+Run in node3:
+
+```elixir
+for i <- :lists.seq(201, 300), do: Rkv.Service.put("k#{i}", i)
+```
+
+Run in node2 and node3:
+
+```elixir
+:riak_core.join('node1@127.0.0.1')
+```
+
+Run in node1:
+
+```elixir
+:riak_core_claimant.plan()
+:riak_core_claimant.commit()
+```
+
+```
+Periodically run this until it stabilizes:
+
+```elixir
+:riak_core_console.member_status([])
+```
+
+You should see something like this on node1:
+
+```
+================================= Membership ==================================
+Status     Ring    Pending    Node
+-------------------------------------------------------------------------------
+valid      37.5%      --      'node1@127.0.0.1'
+valid      31.3%      --      'node2@127.0.0.1'
+valid      31.3%      --      'node3@127.0.0.1'
+-------------------------------------------------------------------------------
+Valid:3 / Leaving:0 / Exiting:0 / Joining:0 / Down:0
+```
+
+Periodically run this until it stabilizes:
+
+```elixir
+{:ok, ring} = :riak_core_ring_manager.get_my_ring()
+:riak_core_ring.pretty_print(ring, [:legend])
+```
+
+You should see something like this on node1:
+
+```
+==================================== Nodes ====================================
+Node a: 6 ( 37.5%) node1@127.0.0.1
+Node b: 5 ( 31.3%) node2@127.0.0.1
+Node c: 5 ( 31.3%) node3@127.0.0.1
+==================================== Ring =====================================
+abca|bcab|cabc|abca|
+```
+
+Fetch some key and check which node returns it:
+
+```elixir
+Rkv.Service.get("k23")
+```
+

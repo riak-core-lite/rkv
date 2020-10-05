@@ -10,4 +10,15 @@ defmodule Rkv.KV do
               {:ok, value :: term()} | {:error, reason :: term()}
   @callback delete(state :: kv_state(), key :: term()) ::
               :ok | {:error, reason :: term()}
+
+  @callback is_empty(state :: kv_state()) ::
+              bool()
+  @callback dispose(state :: kv_state()) ::
+              :ok | {:error, reason :: term()}
+
+  @callback reduce(
+              state :: kv_state(),
+              fun :: ({term(), term()}, term() -> term()),
+              acc0 :: term()
+            ) :: term()
 end

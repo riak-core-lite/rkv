@@ -32,4 +32,17 @@ defmodule Rkv.KV.ETS do
     true = :ets.delete(state.table_id, key)
     :ok
   end
+
+  def is_empty(state) do
+    :ets.first(state.table_id) == :"$end_of_table"
+  end
+
+  def dispose(state) do
+    true = :ets.delete(state.table_id)
+    :ok
+  end
+
+  def reduce(state, fun, acc0) do
+    :ets.foldl(fun, acc0, state.table_id)
+  end
 end
