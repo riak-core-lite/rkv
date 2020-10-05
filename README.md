@@ -485,3 +485,90 @@ Rkv.Service.get(:k2)
 ```elixir
 {{:error, :not_found}, :"dev@127.0.0.1", 685078892498860742907977265335757665463718379520}
 ```
+
+## External API Module
+
+Let's wrap `Rkv.Service` with an external API that doesn't expose so much
+internal state that's only useful for learning , some tests and development but
+not much for production:
+
+Change `lib/rkv.ex` to:
+
+```elixir
+defmodule Rkv do
+  def ping(v \\ 1) do
+    {r, _, _} = Rkv.Service.ping(v)
+    r
+  end
+
+  def put(k, v) do
+    {r, _, _} = Rkv.Service.put(k, v)
+    r
+  end
+
+  def get(k) do
+    {r, _, _} = Rkv.Service.get(k)
+    r
+  end
+
+  def delete(k) do
+    {r, _, _} = Rkv.Service.delete(k)
+    r
+  end
+end
+```
+
+Compile and Run:
+```
+mix compile
+iex --name dev@127.0.0.1 -S mix run
+```
+
+```elixir
+Rkv.get(:k1)
+```
+
+```elixir
+{:error, :not_found}
+```
+
+```elixir
+Rkv.delete(:k1)
+```
+
+```elixir
+:ok
+```
+
+```elixir
+Rkv.put(:k2, :v2)
+```
+
+```elixir
+:ok
+```
+
+```elixir
+Rkv.get(:k2)
+```
+
+```elixir
+{:ok, :v2}
+```
+
+```elixir
+Rkv.delete(:k2)
+```
+
+```elixir
+:ok
+```
+
+```elixir
+Rkv.get(:k2)
+```
+
+```elixir
+{:error, :not_found}
+```
+
