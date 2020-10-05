@@ -1446,3 +1446,204 @@ config :rkv,
 
 Use `redis-cli -p 6479` to specify the port of the node you want to send the command to.
 
+## Persistent KV Implementation with DETS
+
+Add a new file at `lib/rkv/kv_dets.ex` with the following content:
+
+```elixir
+defmodule Rkv.KV.DETS do
+  @behaviour Rkv.KV
+
+  defmodule State do
+    defstruct [:table_name]
+  end
+
+  def init(%{uid: uid}) do
+
+    table_name = String.to_charlist("dets_#{uid}")
+    dets_opts = []
+    {:ok, ^table_name} = :dets.open_file(table_name, dets_opts)
+
+    {:ok, %State{table_name: table_name}}
+  end
+
+  def put(state, key, value) do
+    :dets.insert(state.table_name, {key, value})
+  end
+
+  def get(state, key) do
+    case :dets.lookup(state.table_name, key) do
+      [] ->
+        {:error, :not_found}
+
+      [{_, value}] ->
+        {:ok, value}
+    end
+  end
+
+  def delete(state, key) do
+    :dets.delete(state.table_name, key)
+    :ok
+  end
+
+  def is_empty(state) do
+    :dets.first(state.table_name) == :"$end_of_table"
+  end
+
+  def dispose(state) do
+    :dets.delete_all_objects(state.table_name)
+  end
+
+  def reduce(state, fun, acc0) do
+    :dets.foldl(fun, acc0, state.table_name)
+  end
+end
+```
+
+Add some tests to `test/rkv_test.exs`:
+
+```elixir
+defmodule RkvTest do
+  use ExUnit.Case
+  doctest Rkv
+  alias Rkv.KV
+
+  def reduce_fn(pair, acc_in) do
+    [pair | acc_in]
+  end
+
+  test "KV.ETS get" do
+    {:ok, state} = KV.ETS.init(%{uid: :erlang.unique_integer()})
+
+    true = KV.ETS.is_empty(state)
+    [] = KV.ETS.reduce(state, &reduce_fn/2, [])
+    {:error, :not_found} = KV.ETS.get(state, :k1)
+    :ok = KV.ETS.delete(state, :k1)
+
+    :ok = KV.ETS.put(state, :k2, :v2)
+    [{:k2, :v2}] = KV.ETS.reduce(state, &reduce_fn/2, [])
+    false = KV.ETS.is_empty(state)
+    {:ok, :v2} = KV.ETS.get(state, :k2)
+    :ok = KV.ETS.delete(state, :k2)
+    {:error, :not_found} = KV.ETS.get(state, :k2)
+    :ok = KV.ETS.dispose(state)
+  end
+
+  test "KV.DETS get" do
+    {:ok, state} = KV.DETS.init(%{uid: :erlang.unique_integer()})
+
+    true = KV.DETS.is_empty(state)
+    [] = KV.DETS.reduce(state, &reduce_fn/2, [])
+    {:error, :not_found} = KV.DETS.get(state, :k1)
+    :ok = KV.DETS.delete(state, :k1)
+
+    :ok = KV.DETS.put(state, :k2, :v2)
+    false = KV.DETS.is_empty(state)
+    [{:k2, :v2}] = KV.DETS.reduce(state, &reduce_fn/2, [])
+    {:ok, :v2} = KV.DETS.get(state, :k2)
+    :ok = KV.DETS.delete(state, :k2)
+    {:error, :not_found} = KV.DETS.get(state, :k2)
+    :ok = KV.DETS.dispose(state)
+  end
+end
+```
+
+Update `lib/rkv/vnode.ex` to select the KV backend from configuration,
+change the first line of the init function:
+
+```elixir
+# ...
+  def init([partition]) do
+    kv_mod = Application.get_env(:rkv, :kv_mod, Rkv.KV.ETS)
+# ...
+```
+
+Add the selected backend to `config/config.exs`:
+```elixir
+# ...
+config :rkv,
+  redis_min_port: 6379,
+  redis_max_port: 6379,
+  kv_mod: Rkv.KV.DETS
+# ...
+```
+
+Compile, test and run:
+
+```sh
+mix compile
+mix test
+iex --name dev@127.0.0.1 -S mix run
+```
+
+Test that it works:
+
+```elixir
+Rkv.get(:k1)
+```
+
+```elixir
+{:error, :not_found}
+```
+
+```elixir
+Rkv.delete(:k1)
+```
+
+```elixir
+:ok
+```
+
+```elixir
+Rkv.put(:k2, :v2)
+```
+
+```elixir
+:ok
+```
+
+```elixir
+Rkv.get(:k2)
+```
+
+```elixir
+{:ok, :v2}
+```
+
+```elixir
+Rkv.delete(:k2)
+```
+
+```elixir
+:ok
+```
+
+```elixir
+Rkv.get(:k2)
+```
+
+```elixir
+{:error, :not_found}
+```
+
+Write a key:
+
+```elixir
+Rkv.put(:k2, :v2)
+```
+
+Stop the node and start it again:
+
+```sh
+iex --name dev@127.0.0.1 -S mix run
+```
+
+```elixir
+Rkv.get(:k2)
+```
+
+The value should still be there:
+
+```elixir
+{:ok, :v2}
+```

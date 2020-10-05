@@ -14,7 +14,7 @@ defmodule Rkv.VNode do
   end
 
   def init([partition]) do
-    kv_mod = Rkv.KV.ETS
+    kv_mod = Application.get_env(:rkv, :kv_mod, Rkv.KV.ETS)
     {:ok, state} = kv_mod.init(%{uid: partition})
     {:ok, %{partition: partition, kv_mod: kv_mod, kv_state: state}}
   end
