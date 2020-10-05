@@ -172,3 +172,21 @@ If after many logs you see something like this (the last number can be different
 ```
 
 Then it works!
+
+## Smaller Ring (for readability)
+
+Edit `config/config.exs`:
+
+```elixir
+# chage
+ring_creation_size: 64
+
+# to
+ring_creation_size: 16
+```
+
+Note: remove the `data` folder if it exists since it has a ring file of size 64:
+
+```sh
+rm -rf data
+```
