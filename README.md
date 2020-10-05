@@ -716,3 +716,145 @@ Rkv.Service.get_quorum(:k1, 3, 3, 1000)
    ]
  }}
 ```
+
+## Testing
+
+Add this deps to `mix.exs`:
+
+```elixir
+      {:ctex, "~> 0.1.0", env: :ct},
+      {:rcl_test, "~> 0.2.0", env: :ct}
+```
+
+Fetch new deps:
+
+```sh
+mix deps.get
+```
+
+Create a folder for Common Test suite:
+
+```sh
+mkdir ct
+```
+
+Add our first Common Test suite:
+
+Create a test suite at `ct/rkv_SUITE.exs`:
+
+```elixir
+defmodule Rkv_SUITE do
+  def all() do
+    [:simple_test]
+  end
+
+  def init_per_suite(config) do
+    config
+  end
+
+  def end_per_suite(config) do
+    config
+  end
+
+  def simple_test(_config) do
+    1 = 1
+  end
+end
+```
+
+Run it:
+
+```sh
+MIX_ENV=ct mix ct
+```
+
+### Test a single node
+
+Change `ct/rkv_SUITE.exs` to this:
+
+```elixir
+defmodule Rkv_SUITE do
+  def all() do
+    [:simple_test, :get_not_found]
+  end
+
+  def init_per_suite(config) do
+    common_config = %{
+      app: :rkv,
+      build_env: "dev",
+      data_dir_name: "rkv-data",
+      setup_node_fn: fn (_) -> :ok end,
+    }
+    nodes_config = %{dev1: %{base_port: 10015}}
+    :rcl_test.init_nodes(__MODULE__, config, common_config, nodes_config)
+  end
+
+  def end_per_suite(config) do
+    config
+  end
+
+  def simple_test(_config) do
+    1 = 1
+  end
+
+  def get_not_found(config) do
+    [node] = :test_server.lookup_config(:nodes, config)
+    key = :k1
+    {:error, :not_found} = :rpc.call(node, Rkv, :get, [key])
+  end
+end
+```
+
+Run it again:
+
+```sh
+MIX_ENV=ct mix ct
+```
+
+### Test a cluster
+
+
+Add `cluster_join` test to `all` in `ct/rkv_SUITE.exs`:
+
+```elixir
+  def all() do
+    [:simple_test, :get_not_found, :cluster_join]
+  end
+```
+
+Add the test implementation at the end of `ct/rkv_SUITE.exs`:
+
+```elixir
+  def cluster_join(config0) do
+    common_config = %{
+      app: :rkv,
+      build_env: "dev",
+      data_dir_name: "rkv-data",
+      setup_node_fn: fn (_) -> :ok end,
+    }
+    nodes_config = %{
+      node1: %{base_port: 10115},
+      node2: %{base_port: 10215},
+      node3: %{base_port: 10315},
+    }
+    config = :rcl_test.init_nodes(__MODULE__, config0, common_config, nodes_config)
+    [node1, node2, node3] = :test_server.lookup_config(:nodes, config)
+
+    :ok = :rcl_test.add_nodes_to_cluster(node1, [node2, node3])
+
+    key = :k1
+    val = :v1
+    {:error, :not_found} = :rpc.call(node1, Rkv, :get, [key])
+    {:error, :not_found} = :rpc.call(node2, Rkv, :get, [key])
+    {:error, :not_found} = :rpc.call(node3, Rkv, :get, [key])
+
+    :ok = :rpc.call(node1, Rkv, :put, [key, val])
+    {:ok, ^val} = :rpc.call(node2, Rkv, :get, [key])
+  end
+```
+
+Run it again:
+
+```sh
+MIX_ENV=ct mix ct
+```
