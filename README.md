@@ -190,3 +190,94 @@ Note: remove the `data` folder if it exists since it has a ring file of size 64:
 ```sh
 rm -rf data
 ```
+
+## A Simple Key Value Store
+
+Abstract Key Value Store behaviour:
+
+```elixir
+# lib/rkv/kv.ex
+
+defmodule Rkv.KV do
+  @type kv_state :: term()
+
+  @callback init(opts :: %{atom() => term()}) ::
+              {:ok, state :: kv_state()} | {:error, reason :: term()}
+
+  @callback put(state :: kv_state(), key :: term(), value :: term()) ::
+              :ok | {:error, reason :: term()}
+  @callback get(state :: kv_state(), key :: term()) ::
+              {:ok, value :: term()} | {:error, reason :: term()}
+  @callback delete(state :: kv_state(), key :: term()) ::
+              :ok | {:error, reason :: term()}
+end
+```
+
+In-memory implementation using [ETS](https://erlang.org/doc/man/ets.html):
+
+```elixir
+# lib/rkv/kv_ets.ex
+
+defmodule Rkv.KV.ETS do
+  @behaviour Rkv.KV
+
+  defmodule State do
+    defstruct [:table_name, :table_id]
+  end
+
+  def init(%{uid: uid}) do
+    table_name = String.to_atom("kv_ets_#{inspect(uid)}")
+    ets_opts = [:set, {:write_concurrency, false}, {:read_concurrency, false}]
+    table_id = :ets.new(table_name, ets_opts)
+
+    {:ok, %State{table_name: table_name, table_id: table_id}}
+  end
+
+  def put(state, key, value) do
+    true = :ets.insert(state.table_id, {key, value})
+    :ok
+  end
+
+  def get(state, key) do
+    case :ets.lookup(state.table_id, key) do
+      [] ->
+        {:error, :not_found}
+
+      [{_, value}] ->
+        {:ok, value}
+    end
+  end
+
+  def delete(state, key) do
+    true = :ets.delete(state.table_id, key)
+    :ok
+  end
+end
+```
+
+Some tests:
+```elixir
+# test/rkv_test.exs
+
+defmodule RkvTest do
+  use ExUnit.Case
+  doctest Rkv
+
+  test "KV.ETS get" do
+    {:ok, state} = Rkv.KV.ETS.init(%{uid: :erlang.unique_integer()})
+
+    {:error, :not_found} = Rkv.KV.ETS.get(state, :k1)
+    :ok = Rkv.KV.ETS.delete(state, :k1)
+
+    :ok = Rkv.KV.ETS.put(state, :k2, :v2)
+    {:ok, :v2} = Rkv.KV.ETS.get(state, :k2)
+    :ok = Rkv.KV.ETS.delete(state, :k2)
+    {:error, :not_found} = Rkv.KV.ETS.get(state, :k2)
+  end
+end
+```
+
+Test it:
+```sh
+mix test
+```
