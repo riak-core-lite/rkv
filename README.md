@@ -858,3 +858,205 @@ Run it again:
 ```sh
 MIX_ENV=ct mix ct
 ```
+
+## Benchmarking
+
+Create a new project inside `rkv`:
+
+```sh
+mix new rkv_bench --sup
+cd rkv_bench
+```
+
+Add the following dependency to `rkv_bench/mix.exs`:
+
+```elixir
+{:rcl_bench, "~> 0.1.0"}
+```
+
+Add `:rcl_bench` to `:extra_applications` in `rkv_bench/mix.exs`:
+
+```elixir
+extra_applications: [:logger, :rcl_bench],
+```
+
+Fetch deps:
+```sh
+mix deps.get
+```
+
+Create config folder
+```sh
+mkdir config
+```
+
+Add the following configuration to `rkv_bench/config/config.exs` to indicate which
+module will implement the benchmark driver:
+
+```elixir
+import Config
+
+config :rcl_bench,
+  driver_module: RkvBench.Driver
+```
+
+Create the benchmark driver at `rkv_bench/lib/rkv_bench/driver.ex`:
+
+```elixir
+defmodule RkvBench.Driver do
+  @behaviour :rcl_bench_driver
+
+  def new(id) do
+    node = :"rkv@127.0.0.1"
+    state = %{id: id, node: node, existing: %{}, mod: Rkv}
+    {:ok, state}
+  end
+
+  def run(:get, keygen, _valuegen, %{node: node, mod: mod} = state) do
+    key = keygen.()
+    {_, _} = :rpc.call(node, mod, :get, [key])
+    {:ok, state}
+  end
+
+  def run(:put, keygen, valuegen, %{existing: existing, node: node, mod: mod} = state) do
+    key = keygen.()
+    value = valuegen.()
+    :ok = :rpc.call(node, mod, :put, [key, value])
+    {:ok, %{state | existing: Map.put(existing, key, true)}}
+  end
+
+  def run(:get_own_puts, _keygen, _valuegen, %{existing: existing} = state)
+      when map_size(existing) == 0 do
+    {:ok, state}
+  end
+
+  def run(:get_own_puts, _keygen, _valuegen, %{existing: existing, node: node, mod: mod} = state) do
+    max = Enum.count(existing)
+    take = :rand.uniform(max) - 1
+    {key, _} = Enum.at(existing, take)
+    {:ok, _} = :rpc.call(node, mod, :get, [key])
+    {:ok, state}
+  end
+
+  def terminate(_, _) do
+    :ok
+  end
+
+  # config callbacks
+
+  def mode() do
+    {:ok, {:rate, :max}}
+  end
+
+  # Number of concurrent workers
+  def concurrent_workers() do
+    {:ok, 2}
+  end
+
+  # Test duration (minutes)
+  def duration() do
+    {:ok, 1}
+  end
+
+  # Operations (and associated mix)
+  def operations() do
+    {:ok, [{:get_own_puts, 3}, {:put, 10}, {:get, 2}]}
+  end
+
+  # Base test output directory
+  def test_dir() do
+    {:ok, "tests"}
+  end
+
+  # Key generators
+  # {uniform_int, N} - Choose a uniformly distributed integer between 0 and N
+  def key_generator() do
+    {:ok, {:uniform_int, 100_000}}
+  end
+
+  # Value generators
+  # {fixed_bin, N} - Fixed size binary blob of N bytes
+  def value_generator() do
+    {:ok, {:fixed_bin, 100}}
+  end
+
+  def random_algorithm() do
+    {:ok, :exsss}
+  end
+
+  def random_seed() do
+    {:ok, {1, 4, 3}}
+  end
+
+  def shutdown_on_error() do
+    false
+  end
+end
+```
+
+Compile:
+
+```sh
+mix compile
+```
+
+Start one **Rkv** node (`rkv` project) with a fixed cookie:
+
+```sh
+iex --cookie rcl-bench-cookie --name rkv@127.0.0.1 -S mix run
+```
+
+Notice that `--name rkv@127.0.0.1` is used in the driver.
+
+Start a benchmark node (`rkv_bench` project) with the same cookie:
+
+```sh
+iex --cookie rcl-bench-cookie --name rkvbench@127.0.0.1 -S mix run
+```
+
+It will run for a minute (configured in the driver) and then log:
+
+```
+[info]  Benchmark finished
+[info]  No Errors
+```
+
+It will generate this files (the name of the folder is configured in the driver):
+
+```
+./tests/put_single.csv
+./tests/get_single.csv
+./tests/get-own-puts_single.csv
+```
+
+Generate graphs:
+
+```sh
+mkdir benchmark_graphs
+# ./scripts/latency.R <op> <csv-path> <image-path>
+./scripts/latency.R get rkv_bench/tests/get_single.csv benchmark_graphs/latency_get_single.png
+./scripts/latency.R put rkv_bench/tests/put_single.csv benchmark_graphs/latency_put_single.png
+./scripts/latency.R get-own-puts rkv_bench/tests/get-own-puts_single.csv benchmark_graphs/latency_get-own-puts_single.png
+
+# ./scripts/throughput.R <op> <csv-path> <image-path>
+./scripts/throughput.R get rkv_bench/tests/get_single.csv benchmark_graphs/throughput_get_single.png
+./scripts/throughput.R put rkv_bench/tests/put_single.csv benchmark_graphs/throughput_put_single.png
+./scripts/throughput.R get-own-puts rkv_bench/tests/get-own-puts_single.csv benchmark_graphs/throughput_get-own-puts_single.png
+```
+
+To install R and libraries on ubuntu:
+
+```sh
+sudo apt install r-base
+```
+
+```sh
+R
+```
+
+```r
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages("scales")
+install.packages("lubridate")
+```
