@@ -572,3 +572,147 @@ Rkv.get(:k2)
 {:error, :not_found}
 ```
 
+## Quorun Commands
+
+Add the following functions to `lib/rkv/service.ex`:
+
+```elixir
+  def put_quorum(k, v, n, w, timeout_ms) do
+    quorum_cmd(k, {:put, {k, v}}, n, w, timeout_ms)
+  end
+
+  def get_quorum(k, n, w, timeout_ms) do
+    quorum_cmd(k, {:get, k}, n, w, timeout_ms)
+  end
+
+  def delete_quorum(k, n, w, timeout_ms) do
+    quorum_cmd(k, {:delete, k}, n, w, timeout_ms)
+  end
+
+  defp quorum_cmd(k, cmd, n, w, timeout_ms) do
+    ref = make_ref()
+    opts = %{ref: ref, from: self(), w: w, wait_timeout_ms: timeout_ms}
+    :riak_core_quorum_statem.quorum_request({"rkv", k}, cmd, n, Rkv.Service, Rkv.VNode_master, opts)
+
+    receive do
+      {^ref, res} -> res
+    end
+  end
+```
+
+Compile and Run:
+
+```sh
+mix compile
+iex --name dev@127.0.0.1 -S mix run
+```
+
+Try the new functions:
+
+```elixir
+Rkv.Service.get_quorum(:k1, 3, 2, 1000)
+```
+
+```elixir
+{:ok,
+ %{
+   reason: :finished,
+   result: [
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      822094670998632891489572718402909198556462055424},
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      639406966332270026714112114313373821099470487552}
+   ]
+ }}
+```
+
+```elixir
+Rkv.Service.get_quorum(:k1, 3, 3, 1000)
+```
+
+```elixir
+{:ok,
+ %{
+   reason: :finished,
+   result: [
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      730750818665451459101842416358141509827966271488},
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      822094670998632891489572718402909198556462055424},
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      639406966332270026714112114313373821099470487552}
+   ]
+ }}
+```
+
+```elixir
+Rkv.Service.put_quorum(:k1, :v1, 3, 3, 1000)
+```
+
+```elixir
+{:ok,
+ %{
+   reason: :finished,
+   result: [
+     {:ok, :"rkv@127.0.0.1", 730750818665451459101842416358141509827966271488},
+     {:ok, :"rkv@127.0.0.1", 822094670998632891489572718402909198556462055424},
+     {:ok, :"rkv@127.0.0.1", 639406966332270026714112114313373821099470487552}
+   ]
+ }}
+```
+
+```elixir
+Rkv.Service.get_quorum(:k1, 3, 3, 1000)
+```
+
+```elixir
+{:ok,
+ %{
+   reason: :finished,
+   result: [
+     {{:ok, :v1}, :"rkv@127.0.0.1",
+      730750818665451459101842416358141509827966271488},
+     {{:ok, :v1}, :"rkv@127.0.0.1",
+      639406966332270026714112114313373821099470487552},
+     {{:ok, :v1}, :"rkv@127.0.0.1",
+      822094670998632891489572718402909198556462055424}
+   ]
+ }}
+```
+
+
+```elixir
+Rkv.Service.delete_quorum(:k1, 3, 3, 1000)
+```
+
+```elixir
+{:ok,
+ %{
+   reason: :finished,
+   result: [
+     {:ok, :"rkv@127.0.0.1", 822094670998632891489572718402909198556462055424},
+     {:ok, :"rkv@127.0.0.1", 730750818665451459101842416358141509827966271488},
+     {:ok, :"rkv@127.0.0.1", 639406966332270026714112114313373821099470487552}
+   ]
+ }}
+```
+
+
+```elixir
+Rkv.Service.get_quorum(:k1, 3, 3, 1000)
+```
+
+```elixir
+{:ok,
+ %{
+   reason: :finished,
+   result: [
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      822094670998632891489572718402909198556462055424},
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      730750818665451459101842416358141509827966271488},
+     {{:error, :not_found}, :"rkv@127.0.0.1",
+      639406966332270026714112114313373821099470487552}
+   ]
+ }}
+```
