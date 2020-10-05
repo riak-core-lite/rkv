@@ -3,7 +3,7 @@
 Note: many sections start with a line that says `tag: <tag-name>` if you do
 `git checkout <tag-name>` it will take you to the commit where the changes of
 that section are all commited, so you can skip them and try the examples or run
-the tests.
+the tests. To return to the last commit run `git checkout main`.
 
 ## Tools and Versions
 
